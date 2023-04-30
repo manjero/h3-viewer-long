@@ -1,4 +1,51 @@
+
+
+const BASE_16 = 16;
+
+function hexFrom32Bit(num) {
+    if (num >= 0) {
+        return num.toString(BASE_16);
+    }
+
+    // Handle negative numbers
+    num = num & 0x7fffffff;
+    let tempStr = zeroPad(8, num.toString(BASE_16));
+    const topNum = (parseInt(tempStr[0], BASE_16) + 8).toString(BASE_16);
+    tempStr = topNum + tempStr.substring(1);
+    return tempStr;
+}
+
+function zeroPad(fullLen, numStr) {
+    const numZeroes = fullLen - numStr.length;
+    let outStr = '';
+    for (let i = 0; i < numZeroes; i++) {
+        outStr += '0';
+    }
+    outStr = outStr + numStr;
+    return outStr;
+}
+
+function splitLongToh3Index(lower, upper) {
+    return hexFrom32Bit(upper) + zeroPad(8, hexFrom32Bit(lower));
+}
+
+function h3HexToLong(h3Index) {
+    return BigInt('0x' + h3Index);
+};
+
+function longToH3Hex(lng) {
+    h3_long = Long.fromString(lng);
+    h3_hex = splitLongToh3Index(h3_long['low'], h3_long['high']);
+    return h3_hex;
+}
+
+
+let h3_long = '';
+let h3_hex = '';
+
+
 let map, hexLayer;
+
 
 const GeoUtils = {
     EARTH_RADIUS_METERS: 6371000,
@@ -78,11 +125,13 @@ const copyToClipboard = (text) => {
     document.body.removeChild(dummy);
 };
 
+
 var app = new Vue({
     el: "#app",
 
     data: {
         searchH3Id: undefined,
+        searchH3IdLong: undefined,
         gotoLatLon: undefined,
         currentH3Res: undefined,
 
@@ -139,9 +188,13 @@ var app = new Vue({
                 const h3Bounds = h3.cellToBoundary(h3id);
                 const averageEdgeLength = this.computeAverageEdgeLengthInMeters(h3Bounds);
                 const cellArea = h3.cellArea(h3id, "m2");
-
+                
+                const h3idlong = h3HexToLong(h3id);
+              
                 const tooltipText = `
                 Cell ID: <b>${ h3id }</b>
+                <br />
+                Cell ID Long: <b>${ h3idlong }</b>
                 <br />
                 Average edge length (m): <b>${ averageEdgeLength.toLocaleString() }</b>
                 <br />
@@ -149,7 +202,7 @@ var app = new Vue({
                 `;
 
                 const h3Polygon = L.polygon(h3BoundsToPolygon(h3Bounds), style)
-                    .on('click', () => copyToClipboard(h3id))
+                    .on('click', () => copyToClipboard(h3idlong))
                     .bindTooltip(tooltipText)
                     .addTo(polygonLayer);
 
@@ -158,7 +211,7 @@ var app = new Vue({
                     var svgElement = document.createElementNS("http://www.w3.org/2000/svg", "svg");
                     svgElement.setAttribute('xmlns', "http://www.w3.org/2000/svg");
                     svgElement.setAttribute('viewBox', "0 0 200 200");
-                    svgElement.innerHTML = `<text x="20" y="70" class="h3Text">${h3id}</text>`;
+                    svgElement.innerHTML = `<text x="20" y="70" class="h3Text">${h3idlong}</text>`;
                     var svgElementBounds = h3Polygon.getBounds();
                     L.svgOverlay(svgElement, svgElementBounds).addTo(polygonLayer);
                 }
@@ -172,9 +225,35 @@ var app = new Vue({
                 map.setView([lat, lon], 16);
             }
         },
+      
+        findH3Long: function() {
+            let lng = Long.fromString(this.searchH3IdLong);
+            this.searchH3Id = splitLongToh3Index(lng['low'], lng['high']);
+            if (!h3.isValidCell(this.searchH3Id)) {
+                console.log('failed validation');
+                return;
+            }
+            const h3Boundary = h3.cellToBoundary(this.searchH3Id);
+
+            let bounds = undefined;
+
+            for ([lat, lng] of h3Boundary) {
+                if (bounds === undefined) {
+                    bounds = new L.LatLngBounds([lat, lng], [lat, lng]);
+                } else {
+                    bounds.extend([lat, lng]);
+                }
+            }
+
+            map.fitBounds(bounds);
+
+            const newZoom = H3_RES_TO_ZOOM_CORRESPONDENCE[h3.getResolution(this.searchH3Id)];
+            map.setZoom(newZoom);
+        },
 
         findH3: function() {
             if (!h3.isValidCell(this.searchH3Id)) {
+                console.log('failed validation');
                 return;
             }
             const h3Boundary = h3.cellToBoundary(this.searchH3Id);
@@ -219,13 +298,23 @@ var app = new Vue({
             map.on("moveend", this.updateMapDisplay);
 
             const { h3 } = queryParams;
+            const { h3l } = queryParams;
             console.log(h3)
+            
             if (h3) {
                 this.searchH3Id = h3;
                 window.setTimeout(() => this.findH3(), 50);
+            }
+            else if (h3l) {
+                h3_long = Long.fromString(h3l);
+                h3_hex = splitLongToh3Index(h3_long['low'], h3_long['high']);
+                this.searchH3Id = h3_hex;
+                this.searchH3IdLong = h3HexToLong(h3_hex);
+                window.setTimeout(() => this.findH3Long(), 50);
             }
 
             this.updateMapDisplay();
         });
     }
 });
+
